@@ -1,3 +1,4 @@
+
 import PyPDF2
 from docx import Document
 from pptx import Presentation
@@ -5,10 +6,12 @@ import streamlit as st
 from typing import Dict, List, Tuple
 import os
 import tempfile
+from src.privacy_utils import PrivacyManager
 
 class DocumentProcessor:
-    def __init__(self):
+    def __init__(self, enable_privacy: bool = True):
         self.supported_formats = ['.pdf', '.docx', '.pptx']
+        self.privacy_manager = PrivacyManager() if enable_privacy else None
     
     def extract_text_from_pdf(self, file_path: str) -> Dict:
         """Extract text from PDF file"""
@@ -79,8 +82,14 @@ class DocumentProcessor:
             st.error(f"Error processing PowerPoint: {str(e)}")
             return None
     
-    def process_document(self, uploaded_file) -> Dict:
-        """Main method to process uploaded document"""
+    def process_document(self, uploaded_file, sanitization_level: str = "medium") -> Dict:
+        """
+        Main method to process uploaded document with privacy features
+        
+        Args:
+            uploaded_file: Streamlit uploaded file object
+            sanitization_level: "none", "low", "medium", "high"
+        """
         if uploaded_file is None:
             return None
         
@@ -92,6 +101,7 @@ class DocumentProcessor:
         try:
             file_extension = os.path.splitext(uploaded_file.name)[1].lower()
             
+            # Extract text based on file type
             if file_extension == '.pdf':
                 result = self.extract_text_from_pdf(temp_path)
             elif file_extension == '.docx':
@@ -105,9 +115,38 @@ class DocumentProcessor:
             if result:
                 result['filename'] = uploaded_file.name
                 result['file_size'] = len(uploaded_file.getvalue())
+                
+                # Apply privacy features if enabled
+                if self.privacy_manager and sanitization_level != "none":
+                    with st.spinner("Applying privacy filters..."):
+                        sanitization_result = self.privacy_manager.sanitize_document(
+                            result['text'], 
+                            sanitization_level
+                        )
+                        
+                        # Update the text with sanitized version
+                        result['original_text'] = result['text']  # Keep original for reference
+                        result['text'] = sanitization_result['sanitized_text']
+                        result['sanitization_info'] = sanitization_result
+                        
+                        # Show privacy report
+                        privacy_report = self.privacy_manager.get_privacy_report(sanitization_result)
+                        if sanitization_result['removed_items'] and sum(sanitization_result['removed_items'].values()) > 0:
+                            st.info(f"🔒 Privacy Protection Applied:\n{privacy_report}")
+                
+                # Clear temporary memory
+                if self.privacy_manager:
+                    self.privacy_manager.clear_memory()
             
             return result
             
+        except Exception as e:
+            st.error(f"Error processing document: {str(e)}")
+            return None
+            
         finally:
             # Clean up temporary file
-            os.unlink(temp_path)
+            try:
+                os.unlink(temp_path)
+            except:
+                pass  # File might already be deleted
