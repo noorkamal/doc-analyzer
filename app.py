@@ -1,15 +1,16 @@
 import streamlit as st
 import os
+import requests
 from src.document_processor import DocumentProcessor
-# Import different analyzers based on choice
 from src.ollama_analyzer import OllamaAnalyzer
-from src.huggingface_analyzer import HuggingFaceAnalyzer
+from src.privacy_utils import PrivacyManager
 import plotly.express as px
 import pandas as pd
+from datetime import datetime
 
 # Page config
 st.set_page_config(
-    page_title="Private AI Document Analyzer",
+    page_title="🔒 Private AI Document Analyzer",
     page_icon="🔒",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -18,94 +19,113 @@ st.set_page_config(
 def check_ollama_status():
     """Check if Ollama is running"""
     try:
-        import requests
         response = requests.get("http://localhost:11434/api/tags", timeout=5)
-        return response.status_code == 200
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = [model['name'] for model in models_data.get('models', [])]
+            return True, available_models
+        return False, []
     except:
-        return False
+        return False, []
 
 def main():
+    # Initialize privacy manager
+    privacy_manager = PrivacyManager()
+    
     st.title("🔒 Private AI Document Analyzer")
-    st.markdown("Upload your documents and get AI-powered insights while keeping your data completely private!")
+    st.markdown("**Powered by Ollama** - Your documents never leave your computer!")
     
     # Sidebar for configuration
     with st.sidebar:
         st.header("🛡️ Privacy & Configuration")
         
-        # AI Model Selection
-        st.subheader("Choose AI Backend")
-        ai_backend = st.selectbox(
-            "Select AI Model",
-            [
-                "Ollama (Recommended)",
-                "Hugging Face Transformers (Fully Offline)",
-                "OpenAI (Cloud-based - Not Private)"
-            ],
-            help="Choose how you want to process your documents"
+        # Ollama Status Check
+        ollama_running, available_models = check_ollama_status()
+        
+        if ollama_running:
+            st.success("✅ Ollama is running!")
+            st.info(f"📊 {len(available_models)} models available")
+            
+            if available_models:
+                selected_model = st.selectbox(
+                    "Select AI Model", 
+                    available_models,
+                    help="Choose which local AI model to use for analysis"
+                )
+            else:
+                st.warning("No models found. Please download a model first.")
+                selected_model = "llama3.1"  # Default fallback
+        else:
+            st.error("❌ Ollama not detected")
+            st.markdown("""
+            **Quick Setup:**
+            1. Install: `curl -fsSL https://ollama.ai/install.sh | sh`
+            2. Download model: `ollama pull llama3.1`
+            3. Start: `ollama serve`
+            4. Refresh this page
+            """)
+            selected_model = "llama3.1"
+        
+        st.divider()
+        
+        # Privacy Settings
+        st.subheader("🔐 Privacy Controls")
+        
+        # Document Sanitization
+        st.write("**Document Sanitization:**")
+        sanitization_level = st.selectbox(
+            "Sanitization Level",
+            ["none", "low", "medium", "high"],
+            index=2,  # Default to "medium"
+            help="""
+            • None: No sanitization
+            • Low: Remove obvious sensitive data
+            • Medium: Remove emails, phones, cards
+            • High: Remove names, addresses, SSNs
+            """
         )
         
-        # Configuration based on selection
-        if ai_backend == "Ollama (Recommended)":
-            st.info("🏠 **Fully Local Processing**\nYour data never leaves your computer!")
-            
-            if check_ollama_status():
-                st.success("✅ Ollama is running!")
-                available_models = [
-                    "llama3.1",
-                    "llama3.1:70b", 
-                    "mistral",
-                    "codellama",
-                    "phi3"
-                ]
-                selected_model = st.selectbox("Select Model", available_models)
-            else:
-                st.error("❌ Ollama not detected")
-                st.markdown("""
-                **Setup Instructions:**
-                1. Install Ollama from https://ollama.ai
-                2. Run: `ollama pull llama3.1`
-                3. Restart this app
-                """)
-                selected_model = "llama3.1"
+        # Show what each level does
+        sanitization_info = {
+            "none": "No privacy filtering applied",
+            "low": "Basic filtering: obvious patterns only",
+            "medium": "Standard filtering: emails, phones, credit cards",
+            "high": "Aggressive filtering: names, addresses, SSNs, emails, phones, cards"
+        }
+        st.caption(sanitization_info[sanitization_level])
         
-        elif ai_backend == "Hugging Face Transformers (Fully Offline)":
-            st.info("🔒 **100% Offline Processing**\nNo internet required after initial model download!")
-            
-            hf_models = [
-                "facebook/bart-large-cnn",
-                "google/flan-t5-base",
-                "microsoft/DialoGPT-medium"
-            ]
-            selected_model = st.selectbox("Select Base Model", hf_models)
-            
-            st.warning("⏳ First run will download models (~2-4GB). This may take several minutes.")
+        # Local Storage Options
+        st.write("**Local Storage:**")
+        save_analysis = st.checkbox("Save analysis locally", value=True, 
+                                  help="Save results to ~/.document_analyzer/analyses/")
         
-        else:  # OpenAI
-            st.warning("⚠️ **Cloud Processing**\nYour data will be sent to OpenAI servers!")
-            api_key = st.text_input("OpenAI API Key", type="password")
-            selected_model = st.selectbox("Model", ["gpt-3.5-turbo", "gpt-4"])
+        if save_analysis:
+            # Show storage info
+            analyses_count = len(privacy_manager.load_analysis_history())
+            st.caption(f"💾 {analyses_count} previous analyses stored")
         
         st.divider()
         
-        # Privacy Information
-        st.subheader("🔐 Privacy Features")
-        if ai_backend.startswith("Ollama") or ai_backend.startswith("Hugging Face"):
-            st.success("✅ Local processing only")
-            st.success("✅ No data sent to cloud")
-            st.success("✅ No internet required*")
-            if ai_backend.startswith("Hugging Face"):
-                st.caption("*Except for initial model download")
-        else:
-            st.error("❌ Data sent to OpenAI")
-            st.error("❌ Internet required")
-        
-        st.divider()
-        
-        # Analysis options
-        st.subheader("⚙️ Analysis Options")
-        max_themes = st.slider("Number of themes to extract", 3, 10, 5)
-        max_headlines = st.slider("Number of slide headlines", 3, 10, 6)
+        # Analysis Options
+        st.subheader("⚙️ Analysis Settings")
+        max_themes = st.slider("Key themes to extract", 3, 10, 5)
+        max_headlines = st.slider("Slide headlines to generate", 3, 10, 6)
         summary_length = st.slider("Summary length (words)", 100, 500, 300)
+        
+        st.divider()
+        
+        # Privacy Status
+        st.subheader("🔒 Privacy Status")
+        privacy_features = [
+            "✅ Local AI processing only",
+            "✅ No cloud data transmission", 
+            "✅ Automatic memory clearing",
+            "✅ Anonymous local storage",
+            "✅ Document sanitization"
+        ]
+        
+        for feature in privacy_features:
+            st.write(feature)
     
     # Main content area
     col1, col2 = st.columns([1, 2])
@@ -120,87 +140,88 @@ def main():
         )
         
         if uploaded_file:
-            st.success(f"File uploaded: {uploaded_file.name}")
+            st.success(f"✅ File: {uploaded_file.name}")
             file_size = len(uploaded_file.getvalue())
-            st.info(f"File size: {file_size / 1024:.1f} KB")
+            st.info(f"📊 Size: {file_size / 1024:.1f} KB")
             
-            # Privacy reminder
-            if ai_backend.startswith("Ollama") or ai_backend.startswith("Hugging Face"):
-                st.success("🔒 This file will be processed locally and privately!")
-            else:
-                st.warning("⚠️ This file will be sent to OpenAI for processing!")
+            # Privacy assurance
+            st.success("🔒 **Privacy Guaranteed**\nThis file will be processed locally and never sent to any cloud service!")
+            
+            # Show what will be sanitized
+            if sanitization_level != "none":
+                st.info(f"🛡️ **Protection Level**: {sanitization_level.title()}\n{sanitization_info[sanitization_level]}")
     
     with col2:
         st.header("📊 Document Analysis")
         
-        if uploaded_file:
-            # Check if we can proceed based on backend selection
-            can_proceed = False
-            analyzer = None
+        if uploaded_file and ollama_running:
+            # Process document with privacy features
+            processor = DocumentProcessor(enable_privacy=True)
             
-            if ai_backend == "Ollama (Recommended)":
-                if check_ollama_status():
-                    analyzer = OllamaAnalyzer(model=selected_model)
-                    can_proceed = True
-                else:
-                    st.error("Please install and run Ollama first!")
+            with st.spinner("🔒 Processing document locally with privacy protection..."):
+                document_data = processor.process_document(uploaded_file, sanitization_level)
             
-            elif ai_backend == "Hugging Face Transformers (Fully Offline)":
-                try:
-                    analyzer = HuggingFaceAnalyzer(model_name=selected_model)
-                    can_proceed = True
-                except Exception as e:
-                    st.error(f"Error loading Hugging Face models: {str(e)}")
-                    st.info("This might be the first run. Models are downloading in the background.")
-            
-            else:  # OpenAI
-                if api_key:
-                    # Import OpenAI analyzer (from your original code)
-                    # analyzer = AIAnalyzer(api_key, selected_model)
-                    st.warning("OpenAI integration available but not recommended for private documents!")
-                    can_proceed = False
-                else:
-                    st.warning("Please enter your OpenAI API key")
-            
-            if can_proceed and analyzer:
-                # Process document
-                processor = DocumentProcessor()
+            if document_data:
+                st.success("✅ Document processed successfully!")
                 
-                with st.spinner("Processing document locally..."):
-                    document_data = processor.process_document(uploaded_file)
-                
-                if document_data:
-                    st.success("Document processed successfully!")
+                # Show document info
+                with st.expander("📄 Document Information", expanded=False):
+                    st.write(f"**File Type:** {document_data['type'].upper()}")
+                    st.write(f"**Original Size:** {document_data['file_size']} bytes")
                     
-                    # Display document info
-                    with st.expander("📄 Document Information", expanded=False):
-                        st.write(f"**File Type:** {document_data['type'].upper()}")
-                        st.write(f"**File Name:** {document_data['filename']}")
+                    if document_data['type'] == 'pdf':
+                        st.write(f"**Pages:** {document_data['pages']}")
+                    elif document_data['type'] == 'pptx':
+                        st.write(f"**Slides:** {document_data['slide_count']}")
+                    elif document_data['type'] == 'docx':
+                        st.write(f"**Paragraphs:** {len(document_data['paragraphs'])}")
+                    
+                    # Show sanitization info if applied
+                    if 'sanitization_info' in document_data:
+                        sanitization_data = document_data['sanitization_info']
+                        st.write("**Privacy Protection Applied:**")
+                        st.write(f"- Sanitization Level: {sanitization_data['sanitization_level'].title()}")
+                        st.write(f"- Original Length: {sanitization_data['original_length']:,} chars")
+                        st.write(f"- Processed Length: {sanitization_data['sanitized_length']:,} chars")
                         
-                        if document_data['type'] == 'pdf':
-                            st.write(f"**Pages:** {document_data['pages']}")
-                        elif document_data['type'] == 'pptx':
-                            st.write(f"**Slides:** {document_data['slide_count']}")
-                        elif document_data['type'] == 'docx':
-                            st.write(f"**Paragraphs:** {len(document_data['paragraphs'])}")
+                        removed_items = sanitization_data['removed_items']
+                        if sum(removed_items.values()) > 0:
+                            st.write("- **Items Removed:**")
+                            for item_type, count in removed_items.items():
+                                if count > 0:
+                                    st.write(f"  - {item_type.title()}: {count}")
+                
+                # AI Analysis
+                if selected_model in [m for m in available_models] if available_models else [selected_model]:
+                    analyzer = OllamaAnalyzer(model=selected_model)
                     
-                    # AI Analysis
+                    # Perform analysis
                     analysis = analyzer.analyze_document(document_data)
                     
-                    # Create tabs for different analysis results
-                    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    # Save analysis locally if enabled
+                    if save_analysis:
+                        save_path = privacy_manager.save_analysis_locally(
+                            analysis, 
+                            uploaded_file.name,
+                            document_data.get('sanitization_info')
+                        )
+                        if save_path:
+                            st.success(f"💾 Analysis saved locally (private storage)")
+                    
+                    # Create tabs for results
+                    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                         "📝 Summary", 
                         "📋 Executive Summary", 
                         "🎯 Key Themes", 
                         "📊 Slide Headlines",
-                        "📈 Analytics"
+                        "📈 Analytics",
+                        "🔒 Privacy Report"
                     ])
                     
                     with tab1:
                         st.subheader("Document Summary")
                         st.write(analysis.summary)
                         
-                        # Copy button
                         if st.button("📋 Copy Summary", key="copy_summary"):
                             st.code(analysis.summary, language=None)
                     
@@ -216,7 +237,6 @@ def main():
                         for i, theme in enumerate(analysis.key_themes, 1):
                             st.write(f"**{i}.** {theme}")
                         
-                        # Export themes
                         themes_text = "\n".join([f"{i}. {theme}" for i, theme in enumerate(analysis.key_themes, 1)])
                         if st.button("📋 Copy Themes", key="copy_themes"):
                             st.code(themes_text, language=None)
@@ -235,7 +255,7 @@ def main():
                         
                         col_a, col_b, col_c = st.columns(3)
                         with col_a:
-                            st.metric("Word Count", analysis.word_count)
+                            st.metric("Word Count", f"{analysis.word_count:,}")
                         with col_b:
                             st.metric("Themes Found", len(analysis.key_themes))
                         with col_c:
@@ -243,54 +263,79 @@ def main():
                         
                         st.write(f"**Document Sentiment:** {analysis.sentiment}")
                         
-                        # Word count visualization
+                        # Reading time calculation
                         if analysis.word_count > 0:
                             reading_time = max(1, analysis.word_count // 200)
                             st.info(f"📖 Estimated reading time: {reading_time} minute(s)")
                         
+                        # Model info
+                        st.write(f"**AI Model Used:** {selected_model}")
+                        st.write(f"**Processing Time:** {datetime.now().strftime('%H:%M:%S')}")
+                    
+                    with tab6:
+                        st.subheader("🔒 Privacy & Security Report")
+                        
                         # Privacy confirmation
-                        if ai_backend.startswith("Ollama") or ai_backend.startswith("Hugging Face"):
-                            st.success("🔒 All analysis performed locally - your data remained private!")
+                        st.success("✅ **Complete Privacy Maintained**")
+                        
+                        privacy_report_items = [
+                            "🏠 All processing performed locally on your computer",
+                            "🚫 No data transmitted to external servers", 
+                            "🗑️ Temporary files automatically deleted",
+                            "🧹 Memory cleared after processing",
+                            "📁 Results stored locally only (if enabled)"
+                        ]
+                        
+                        for item in privacy_report_items:
+                            st.write(item)
+                        
+                        # Show sanitization report if applied
+                        if 'sanitization_info' in document_data:
+                            st.divider()
+                            st.subheader("🛡️ Document Sanitization Report")
+                            privacy_report = privacy_manager.get_privacy_report(
+                                document_data['sanitization_info']
+                            )
+                            st.info(privacy_report)
+                        
+                        # Privacy settings export
+                        if st.button("📤 Export Privacy Settings"):
+                            privacy_settings = privacy_manager.export_privacy_settings()
+                            st.json(privacy_settings)
+                else:
+                    st.error(f"Selected model '{selected_model}' is not available. Please download it first.")
+        
+        elif uploaded_file and not ollama_running:
+            st.error("🚫 Please install and start Ollama to analyze documents privately!")
+            st.markdown("""
+            **Setup Instructions:**
+            1. Install Ollama: `curl -fsSL https://ollama.ai/install.sh | sh`
+            2. Download model: `ollama pull llama3.1`
+            3. Start Ollama: `ollama serve`
+            """)
         
         elif not uploaded_file:
-            st.info("Upload a document to get started!")
+            st.info("👆 Upload a document to get started with private AI analysis!")
 
-    # Footer with privacy information
-    st.divider()
-    
-    col_info1, col_info2 = st.columns(2)
-    
-    with col_info1:
-        st.markdown("""
-        ### 🚀 Features
-        - **Multi-format Support**: PDF, Word (.docx), and PowerPoint (.pptx)
-        - **Private AI Analysis**: Local processing only
-        - **Executive Summaries**: Business-focused summaries
-        - **Slide Headlines**: Ready-to-use presentation titles
-        - **Document Analytics**: Word count, sentiment, and more
-        """)
-    
-    with col_info2:
-        st.markdown("""
-        ### 🔒 Privacy Options
-        
-        **🟢 Ollama (Recommended)**
-        - ✅ Complete privacy
-        - ✅ Fast processing
-        - ✅ Multiple model options
-        - ⚡ Requires ~4GB RAM
-        
-        **🟢 Hugging Face Transformers**
-        - ✅ 100% offline after setup
-        - ✅ No external dependencies
-        - ⚠️ Slower processing
-        - ⚡ Requires ~8GB RAM
-        
-        **🔴 OpenAI (Not Private)**
-        - ❌ Data sent to cloud
-        - ❌ Requires API key & payment
-        - ✅ Fastest & most accurate
-        """)
+    # Analysis History (if enabled)
+    if save_analysis:
+        st.divider()
+        with st.expander("📚 Analysis History", expanded=False):
+            history = privacy_manager.load_analysis_history()
+            
+            if history:
+                st.write(f"**{len(history)} previous analyses found:**")
+                
+                for i, analysis_data in enumerate(history[:5]):  # Show last 5
+                    timestamp = analysis_data.get('timestamp', 'Unknown')
+                    word_count = analysis_data.get('word_count', 0)
+                    themes_count = len(analysis_data.get('key_themes', []))
+                    
+                    st.write(f"**{i+1}.** {timestamp} - {word_count:,} words, {themes_count} themes")
+                
+                if len(history) > 5:
+                    st.caption(f"... and {len(history) - 5} more")
+            else:
+                st.info("No previous analyses found.")
 
-if __name__ == "__main__":
-    main()
+    # Footer
