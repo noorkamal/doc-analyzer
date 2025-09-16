@@ -271,3 +271,26 @@ def main():
         """)
     
     with col_info2:
+        st.markdown("""
+        ### 🔒 Privacy Options
+        
+        **🟢 Ollama (Recommended)**
+        - ✅ Complete privacy
+        - ✅ Fast processing
+        - ✅ Multiple model options
+        - ⚡ Requires ~4GB RAM
+        
+        **🟢 Hugging Face Transformers**
+        - ✅ 100% offline after setup
+        - ✅ No external dependencies
+        - ⚠️ Slower processing
+        - ⚡ Requires ~8GB RAM
+        
+        **🔴 OpenAI (Not Private)**
+        - ❌ Data sent to cloud
+        - ❌ Requires API key & payment
+        - ✅ Fastest & most accurate
+        """)
+
+if __name__ == "__main__":
+    main()
