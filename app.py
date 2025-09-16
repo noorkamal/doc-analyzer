@@ -338,4 +338,5 @@ def main():
             else:
                 st.info("No previous analyses found.")
 
-    # Footer
+if __name__ == "__main__":
+    main()
